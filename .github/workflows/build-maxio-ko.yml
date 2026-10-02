@@ -56,12 +56,17 @@ jobs:
           cp "$SYMV" /tmp/cfg/Module.symvers
           wc -l /tmp/cfg/Module.symvers
 
-      - name: Clone unifreq kernel source
+      - name: Clone unifreq kernel source (target tag; vermagic must match)
         run: |
           set -e
-          git clone --depth=1 -b "${{ github.event.inputs.ksrc_branch }}" \
+          KV="${{ github.event.inputs.kernel_ver }}"
+          # ★ 必须 clone 目标内核的 tag，而不是分支 tip：
+          #   分支 main 现在已是 6.18.53+，编出的 .ko vermagic 与飞牛 6.18.18 内核不匹配。
+          git clone --depth=1 --branch "v${KV}" \
             https://github.com/unifreq/linux-6.18.y /tmp/ks
-          echo "--- kernel Makefile head:"; head -5 /tmp/ks/Makefile
+          cd /tmp/ks
+          echo "--- Makefile VERSION/PATCHLEVEL/SUBLEVEL ---"
+          grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL) ' Makefile
           echo "--- source size:"; du -sh /tmp/ks
 
       - name: Configure kernel (olddefconfig) and prepare build

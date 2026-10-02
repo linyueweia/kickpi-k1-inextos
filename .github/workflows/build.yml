@@ -42,7 +42,7 @@ jobs:
       - name: Build iNextOS image
         run: |
           cd build
-          sudo ./compile.sh build \
+          ./compile.sh build \
             BOARD=kickpi-k1a \
             BRANCH=vendor \
             RELEASE=trixie \

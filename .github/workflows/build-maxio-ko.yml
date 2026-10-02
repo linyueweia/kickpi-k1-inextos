@@ -87,12 +87,13 @@ jobs:
           if ! grep -q 'config MAXIO_PHY' drivers/net/phy/Kconfig; then
             python3 -c "p='drivers/net/phy/Kconfig';s=open(p).read();blk='config MAXIO_PHY\\n\\ttristate \"Maxio PHYs\"\\n\\thelp\\n\\t  Currently supports the Maxio MAE0621A family of Gigabit Ethernet PHYs.\\n\\n';open(p,'w').write(s.replace('config MOTORCOMM_PHY',blk+'config MOTORCOMM_PHY',1))"
           fi
-          # Makefile
-          if ! grep -q 'CONFIG_MAXIO_PHY' drivers/net/phy/Makefile; then
-            sed -i 's|^obj-$(CONFIG_MOTORCOMM_PHY)|obj-$(CONFIG_MAXIO_PHY)\t\t+= maxio.o\nobj-$(CONFIG_MOTORCOMM_PHY)|' drivers/net/phy/Makefile
+          # Makefile —— 无条件 obj-m：不依赖 CONFIG 条件求值，确保 maxio 一定进模块列表
+          if ! grep -q 'maxio.o' drivers/net/phy/Makefile; then
+            sed -i '1i obj-m += maxio.o' drivers/net/phy/Makefile
           fi
+          head -3 drivers/net/phy/Makefile
           echo "--- Kconfig:"; grep -A3 'config MAXIO_PHY' drivers/net/phy/Kconfig
-          echo "--- Makefile:"; grep -n 'MAXIO_PHY' drivers/net/phy/Makefile
+          echo "--- Makefile (maxio 行):"; grep -n 'maxio' drivers/net/phy/Makefile
           # ★ 关键：Kconfig/Makefile 是 olddefconfig 之后才注入的，
           #   必须重新生成 .config 并显式把 MAXIO_PHY 打开为 =m，
           #   否则 obj-$(CONFIG_MAXIO_PHY) 不成立 → 静默不编译 maxio.ko
@@ -106,14 +107,11 @@ jobs:
         run: |
           set -e -o pipefail
           cd /tmp/ks
-          # 注意：必须用 modules 目标（会传 -DMODULE）；maxio.ko 单目标走 single_modules，
-          # 会导致 MODULE_LICENSE 宏为空并强制重建全内核 Module.symvers。
-          # 先单独编 maxio.o，把它的错误完整暴露出来（不要被 tail 截断）
+          echo "### obj-m 中的 maxio:"; grep -n 'maxio' drivers/net/phy/Makefile
+          echo "### 只编译 maxio 模块（不 -j，输出全量）"
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
-               CC=aarch64-linux-gnu-gcc M=drivers/net/phy maxio.o 2>&1 | tail -60
-          echo "--- maxio.o:"; ls -l drivers/net/phy/maxio.o 2>&1 || true
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
-               CC=aarch64-linux-gnu-gcc M=drivers/net/phy modules -j4 2>&1 | tail -60
+               CC=aarch64-linux-gnu-gcc M=drivers/net/phy maxio.ko 2>&1 | tail -80
+          echo "### maxio.ko 是否生成:"; ls -l drivers/net/phy/maxio.ko 2>&1 || true
           echo "=== artifact ==="
           ls -l drivers/net/phy/maxio.ko
           aarch64-linux-gnu-objdump -f drivers/net/phy/maxio.ko | head -4

@@ -93,6 +93,14 @@ jobs:
           fi
           echo "--- Kconfig:"; grep -A3 'config MAXIO_PHY' drivers/net/phy/Kconfig
           echo "--- Makefile:"; grep -n 'MAXIO_PHY' drivers/net/phy/Makefile
+          # ★ 关键：Kconfig/Makefile 是 olddefconfig 之后才注入的，
+          #   必须重新生成 .config 并显式把 MAXIO_PHY 打开为 =m，
+          #   否则 obj-$(CONFIG_MAXIO_PHY) 不成立 → 静默不编译 maxio.ko
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig 2>&1 | tail -5
+          ./scripts/config --module MAXIO_PHY
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig 2>&1 | tail -5
+          echo "--- .config 中的 MAXIO_PHY:"
+          grep -n 'MAXIO_PHY' .config || { echo "!! CONFIG_MAXIO_PHY 未启用，终止"; exit 1; }
 
       - name: Build maxio.ko
         run: |

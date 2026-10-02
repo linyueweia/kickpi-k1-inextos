@@ -21,6 +21,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu make bc flex bison libssl-dev kmod
 
+      - name: Diagnose host toolchain (环境诊断)
+        run: |
+          echo "===== 0) 工作目录与 runner ====="
+          pwd; uname -a; cat /etc/os-release | head -2
+          echo "===== 1) 相关环境变量 ====="
+          env | grep -iE '^(CC|CXX|CPP|CFLAGS|CPPFLAGS|LDFLAGS|ARCH|CROSS_COMPILE|KBUILD)' || echo "(none)"
+          echo "===== 2) gcc 解析 ====="
+          echo "--- which -a gcc:"; which -a gcc || true
+          echo "--- ls -l /usr/bin/gcc:"; ls -l /usr/bin/gcc || true
+          echo "--- file /usr/bin/gcc:"; file -b /usr/bin/gcc || true
+          echo "--- /usr/bin/gcc -dumpmachine:"; /usr/bin/gcc -dumpmachine || true
+          echo "--- gcc -dumpmachine:"; gcc -dumpmachine || true
+          echo "--- gcc --version:"; gcc --version | head -1 || true
+          echo "===== 3) 交叉编译器 ====="
+          which aarch64-linux-gnu-gcc; aarch64-linux-gnu-gcc -dumpmachine || true
+          echo "===== 4) 实测编译架构（关键） ====="
+          printf '#include <stdio.h>\nint main(){printf("hi\\n");return 0;}\n' > /tmp/t.c
+          /usr/bin/gcc -o /tmp/t_x86 /tmp/t.c && echo "  /usr/bin/gcc -> $(file -b /tmp/t_x86)"
+          gcc -o /tmp/t_plain /tmp/t.c && echo "  gcc          -> $(file -b /tmp/t_plain)"
+          echo "===== 5) apt 来源 ====="
+          dpkg -l | grep -E '^ii +(gcc|gcc-[0-9]+|libc6)' | awk '{print $2, $3}' | head -8
+
       - name: Download FnNAS kernel bundle and extract headers
         run: |
           set -e

@@ -17,9 +17,10 @@ function post_family_tweaks__kickpi_k1a_default_network() {
 	display_alert "$BOARD" "Set KICKPI K1A default network interface to eth0" "info"
 	mkdir -p "${SDCARD}/etc/udev/rules.d/"
 	cat <<- EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
-		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="eth0"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe010000.ethernet", NAME:="eth0"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="eth1"
 	EOF
 	echo "DEFAULT_INTERFACE=eth0" > "${SDCARD}/root/.default-network"
-	echo "fe2a0000.ethernet" > "${SDCARD}/etc/eth_order"
+	echo "fe010000.ethernet,fe2a0000.ethernet" > "${SDCARD}/etc/eth_order"
 	return 0
 }

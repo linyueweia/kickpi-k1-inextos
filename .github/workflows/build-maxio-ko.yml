@@ -5,6 +5,10 @@ name: Build maxio.ko (Maxio MAE0621A) for K1A / FnNAS  [unifreq source]
 #    在 x86_64 runner 上无法执行("Exec format error")，且它们无法脱离内核树单独编译。
 #  - 正确做法：用官方内核源码 unifreq/linux-6.18.y，从飞牛 kernel 包取 config，
 #    make modules_prepare 生成 x86 host tools，再编 maxio.ko。
+#  - ★ 编译必须用 out-of-tree 独立目录 + `modules` 目标。
+#    `make M=drivers/net/phy maxio.ko` 走 single_modules，不传 -DMODULE，
+#    MODULE_LICENSE 宏会展开为空 → modpost 报 "missing MODULE_LICENSE()"。
+#    （驱动本体第 411 行本来就有 MODULE_LICENSE("GPL")，不是驱动的问题。）
 
 on:
   workflow_dispatch:
@@ -76,50 +80,35 @@ jobs:
           file -b /tmp/ks/scripts/basic/fixdep
           file -b /tmp/ks/scripts/mod/modpost
 
-      - name: Inject maxio driver (source + Kconfig + Makefile)
+      - name: Prepare maxio module (out-of-tree dir)
         run: |
           set -e
-          cd /tmp/ks
-          cp "$GITHUB_WORKSPACE/kernel-files/maxio.c" drivers/net/phy/maxio.c
+          mkdir -p /tmp/mx
+          cp "$GITHUB_WORKSPACE/kernel-files/maxio.c" /tmp/mx/maxio.c
           # 6.18 兼容：phy_device.eee_broken_modes 已移除（EEE 已由 MDIO_AN_EEE_ADV=0 关闭）
-          sed -i 's|^\([[:space:]]*\)phydev->eee_broken_modes = broken;|\1/* removed: member gone in >=6.14 */|' drivers/net/phy/maxio.c
-          # Kconfig
-          if ! grep -q 'config MAXIO_PHY' drivers/net/phy/Kconfig; then
-            python3 -c "p='drivers/net/phy/Kconfig';s=open(p).read();blk='config MAXIO_PHY\\n\\ttristate \"Maxio PHYs\"\\n\\thelp\\n\\t  Currently supports the Maxio MAE0621A family of Gigabit Ethernet PHYs.\\n\\n';open(p,'w').write(s.replace('config MOTORCOMM_PHY',blk+'config MOTORCOMM_PHY',1))"
-          fi
-          # Makefile —— 无条件 obj-m：不依赖 CONFIG 条件求值，确保 maxio 一定进模块列表
-          if ! grep -q 'maxio.o' drivers/net/phy/Makefile; then
-            sed -i '1i obj-m += maxio.o' drivers/net/phy/Makefile
-          fi
-          head -3 drivers/net/phy/Makefile
-          echo "--- Kconfig:"; grep -A3 'config MAXIO_PHY' drivers/net/phy/Kconfig
-          echo "--- Makefile (maxio 行):"; grep -n 'maxio' drivers/net/phy/Makefile
-          # ★ 关键：Kconfig/Makefile 是 olddefconfig 之后才注入的，
-          #   必须重新生成 .config 并显式把 MAXIO_PHY 打开为 =m，
-          #   否则 obj-$(CONFIG_MAXIO_PHY) 不成立 → 静默不编译 maxio.ko
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig 2>&1 | tail -5
-          ./scripts/config --module MAXIO_PHY
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig 2>&1 | tail -5
-          echo "--- .config 中的 MAXIO_PHY:"
-          grep -n 'MAXIO_PHY' .config || { echo "!! CONFIG_MAXIO_PHY 未启用，终止"; exit 1; }
+          sed -i 's|^\([[:space:]]*\)phydev->eee_broken_modes = broken;|\1/* removed: member gone in >=6.14 */|' /tmp/mx/maxio.c
+          printf 'obj-m += maxio.o\n' > /tmp/mx/Makefile
+          echo "--- /tmp/mx:"; ls -l /tmp/mx
+          echo "--- license/desc 行（必须存在）:"
+          grep -n 'MODULE_LICENSE\|MODULE_DESCRIPTION\|module_phy_driver' /tmp/mx/maxio.c
 
-      - name: Build maxio.ko
+      - name: Build maxio.ko (out-of-tree, modules target)
         run: |
           set -e -o pipefail
           cd /tmp/ks
-          echo "### obj-m 中的 maxio:"; grep -n 'maxio' drivers/net/phy/Makefile
-          echo "### 只编译 maxio 模块（不 -j，输出全量）"
+          # ★ 必须用 modules 目标（会传 -DMODULE）。
+          #   切勿用 `M=/tmp/mx maxio.ko`：那是 single_modules，不传 -DMODULE，
+          #   MODULE_LICENSE 宏展开为空 → modpost 报 missing MODULE_LICENSE()。
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
-               CC=aarch64-linux-gnu-gcc M=drivers/net/phy maxio.ko 2>&1 | tail -80
-          echo "### maxio.ko 是否生成:"; ls -l drivers/net/phy/maxio.ko 2>&1 || true
+               CC=aarch64-linux-gnu-gcc M=/tmp/mx modules 2>&1 | tail -80
           echo "=== artifact ==="
-          ls -l drivers/net/phy/maxio.ko
-          aarch64-linux-gnu-objdump -f drivers/net/phy/maxio.ko | head -4
-          modinfo drivers/net/phy/maxio.ko | head -12
+          ls -l /tmp/mx/maxio.ko
+          aarch64-linux-gnu-objdump -f /tmp/mx/maxio.ko | head -4
+          modinfo /tmp/mx/maxio.ko | head -12
 
       - name: Upload maxio.ko
         uses: actions/upload-artifact@v4
         with:
           name: maxio-ko-${{ github.event.inputs.kernel_ver }}
-          path: /tmp/ks/drivers/net/phy/maxio.ko
+          path: /tmp/mx/maxio.ko
           if-no-files-found: error

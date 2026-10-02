@@ -45,6 +45,12 @@ jobs:
           echo "config: $CFG"
           mkdir -p /tmp/cfg && cp "$CFG" /tmp/cfg/config
           head -5 /tmp/cfg/config
+          # header 包里有与内核完全匹配的 Module.symvers（modpost 必需）
+          mkdir -p /tmp/kh && tar xzf "$(find /tmp/kb -name 'header-*.tar.gz' | head -1)" -C /tmp/kh
+          SYMV="$(find /tmp/kh -maxdepth 2 -name 'Module.symvers' | head -1)"
+          echo "Module.symvers: $SYMV"
+          cp "$SYMV" /tmp/cfg/Module.symvers
+          wc -l /tmp/cfg/Module.symvers
 
       - name: Clone unifreq kernel source
         run: |
@@ -63,6 +69,9 @@ jobs:
           echo "--- prepare host tools + module headers ---"
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
                modules_prepare -j4 2>&1 | tail -15
+          # 放入匹配的 Module.symvers（否则 modpost 报所有内核符号 undefined）
+          cp /tmp/cfg/Module.symvers /tmp/ks/Module.symvers
+          echo "symvers lines: $(wc -l < /tmp/ks/Module.symvers)"
           echo "--- host tool arch (must be x86-64) ---"
           file -b /tmp/ks/scripts/basic/fixdep
           file -b /tmp/ks/scripts/mod/modpost
@@ -89,8 +98,10 @@ jobs:
         run: |
           set -e
           cd /tmp/ks
+          # 注意：必须用 modules 目标（会传 -DMODULE）；maxio.ko 单目标走 single_modules，
+          # 会导致 MODULE_LICENSE 宏为空并强制重建全内核 Module.symvers。
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
-               CC=aarch64-linux-gnu-gcc M=drivers/net/phy maxio.ko -j4 2>&1 | tail -30
+               CC=aarch64-linux-gnu-gcc M=drivers/net/phy modules -j4 2>&1 | tail -30
           echo "=== artifact ==="
           ls -l drivers/net/phy/maxio.ko
           aarch64-linux-gnu-objdump -f drivers/net/phy/maxio.ko | head -4

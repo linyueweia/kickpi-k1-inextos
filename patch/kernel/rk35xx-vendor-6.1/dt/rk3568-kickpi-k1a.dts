@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * KICKPI K1A  (Rockchip RK3568, 4x Cortex-A55, 4GB DDR4, 64GB eMMC, 1x GbE, NVMe, HDMI)
+ *
+ * Baseline: rk3568-easepi-a2.dts (same vendor family, RK3568, 6.1 vendor kernel)
+ * Board data extracted from the official KICKPI K1A device tree:
+ *   compatible = "rockchip,rk3568-kickpi-k1a", "rockchip,rk3568";
+ *   model      = "Rockchip RK3568 KICKPI K1A Board"
+ *
+ * K1A storage mapping (NOTE: opposite of EasePi R1/A2!):
+ *   eMMC  -> sdhci  @0xfe310000  (mmc0)
+ *   TF/SD -> sdmmc0 @0xfe2b0000  (mmc1)
+ *   SDIO  -> sdmmc2 @0xfe000000  (mmc3)
+ * GbE -> gmac1 @0xfe2a0000 (rgmii, tx_delay=0x21 rx_delay=0x3c, reset <&gpio2 RK_PD3 ACTIVE_LOW>)
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/rockchip.h>
+#include <dt-bindings/pwm/pwm.h>
+#include <dt-bindings/input/rk-input.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/display/drm_mipi_dsi.h>
+#include <dt-bindings/display/rockchip_vop.h>
+#include "rk3568.dtsi"
+
+/ {
+	compatible = "kickpi,k1a", "rockchip,rk3568";
+	model = "KICKPI K1A";
+
+	aliases {
+		mmc0 = &sdhci;		/* eMMC  @fe310000 */
+		mmc1 = &sdmmc0;		/* TF/SD @fe2b0000 */
+		mmc2 = &sdmmc1;		/*       @fe2c0000 */
+		mmc3 = &sdmmc2;		/* SDIO  @fe000000 */
+
+		ethernet0 = &gmac1;	/* 1x GbE @fe2a0000 */
+		ethernet1 = &gmac0;	/*        @fe010000 */
+
+		led-boot     = &work_led;
+		led-failsafe = &work_led;
+		led-running  = &work_led;
+		led-upgrade  = &work_led;
+	};
+
+	chosen: chosen {
+		bootargs = "earlycon=uart8250,mmio32,0xfe660000 console=ttyFIQ0";
+	};
+
+	fiq-debugger {
+		compatible = "rockchip,fiq-debugger";
+		rockchip,serial-id = <2>;
+		rockchip,wake-irq = <0>;
+		/* If enable uart uses irq instead of fiq */
+		rockchip,irq-mode-enable = <1>;
+		rockchip,baudrate = <1500000>;	/* Only 115200 and 1500000 */
+		interrupts = <GIC_SPI 252 IRQ_TYPE_LEVEL_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&uart2m0_xfer>;
+		status = "okay";
+	};
+
+	firmware {
+		optee: optee {
+			compatible = "linaro,optee-tz";
+			method = "smc";
+		};
+	};
+
+	leds: leds {
+		compatible = "gpio-leds";
+
+		work_led: work-led {
+			gpios = <&gpio0 RK_PD5 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+		};
+	};
+};
+
+/* eMMC: sdhci @0xfe310000 */
+&sdhci {
+	status = "okay";
+	bus-width = <8>;
+	no-sdio;
+	no-sd;
+	non-removable;
+	max-frequency = <200000000>;
+};
+
+/* TF/SD: sdmmc0 @0xfe2b0000 */
+&sdmmc0 {
+	status = "okay";
+	bus-width = <4>;
+	cap-mmc-highspeed;
+	cap-sd-highspeed;
+	max-frequency = <150000000>;
+};
+
+/* GbE: gmac1 @0xfe2a0000 */
+&gmac1 {
+	status = "okay";
+	phy-mode = "rgmii";
+	clock_in_out = "output";
+	snps,reset-gpio = <&gpio2 RK_PD3 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	/* Reset time is 20ms, 100ms for rtl8211f */
+	snps,reset-delays-us = <0 20000 100000>;
+	tx_delay = <0x21>;
+	rx_delay = <0x3c>;
+};

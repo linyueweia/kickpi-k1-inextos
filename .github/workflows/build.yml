@@ -33,6 +33,11 @@ jobs:
           echo "--- board config:"; cat build/config/boards/kickpi-k1a.csc
           echo "--- dts head:"; head -20 build/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-kickpi-k1a.dts
 
+      - name: Set up QEMU (binfmt_misc for arm64 cross-build)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,arm
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true

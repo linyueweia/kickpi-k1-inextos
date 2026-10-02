@@ -1,0 +1,68 @@
+name: Build maxio.ko (Maxio MAE0621A PHY) for K1A / FnNAS
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_ver:
+        description: 'FnNAS kernel version (e.g. 6.18.18 or 6.12.41)'
+        required: true
+        default: '6.18.18'
+
+jobs:
+  build-ko:
+    name: Build maxio.ko (${{ github.event.inputs.kernel_ver }}-trim)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cross toolchain and tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu make bc flex bison libssl-dev kmod
+
+      - name: Download FnNAS kernel header package
+        run: |
+          set -e
+          KV="${{ github.event.inputs.kernel_ver }}"
+          URL="https://github.com/ophub/fnnas/releases/download/kernel_fnnas/header-rockchip-${KV}-trim.tar.gz"
+          echo "URL: $URL"
+          curl -fL --retry 3 -o /tmp/header.tar.gz "$URL"
+          ls -lh /tmp/header.tar.gz
+          mkdir -p /tmp/kh && tar xzf /tmp/header.tar.gz -C /tmp/kh
+          echo "--- header tree:"; ls /tmp/kh | head -15
+          # 预编译的 host tools 在 runner 上可能有 glibc 差异 → 删掉让 make 重建
+          rm -f /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost || true
+          cat /tmp/kh/include/config/kernel.release 2>/dev/null || true
+
+      - name: Prepare maxio module source（含 6.18 API 兼容修补）
+        run: |
+          set -e
+          mkdir -p ko && cp kernel-files/maxio.c ko/
+          printf 'obj-m += maxio.o\n' > ko/Makefile
+          # 6.18 移除了 phy_device.eee_broken_modes（EEE 已由 MDIO_AN_EEE_ADV=0 关闭）
+          sed -i 's|^\([[:space:]]*\)phydev->eee_broken_modes = broken;|\1/* removed: member gone in >=6.14 */|' ko/maxio.c
+          echo "--- 检查 eee_broken_modes:"; grep -n 'eee_broken_modes' ko/maxio.c || echo "  已清除"
+          echo "--- 检查 PHY_GBIT_FEATURES:"; grep -c 'PHY_GBIT_FEATURES' ko/maxio.c || true
+
+      - name: Build maxio.ko
+        run: |
+          set -e
+          cd ko
+          make -C /tmp/kh M="$PWD" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            CC=aarch64-linux-gnu-gcc HOSTCC=gcc \
+            modules -j4 2>&1 | tail -30
+          echo "=== 产物 ==="
+          ls -l maxio.ko
+          aarch64-linux-gnu-objdump -f maxio.ko | head -3 || true
+          modinfo maxio.ko | head -10 || true
+
+      - name: Upload maxio.ko
+        uses: actions/upload-artifact@v4
+        with:
+          name: maxio-ko-${{ github.event.inputs.kernel_ver }}
+          path: |
+            ko/maxio.ko
+            ko/Module.symvers
+          if-no-files-found: error

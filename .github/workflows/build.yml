@@ -30,6 +30,10 @@ jobs:
           mkdir -p build/patch/kernel/rk35xx-vendor-6.1/dt
           cp -v k1a/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-kickpi-k1a.dts \
                 build/patch/kernel/rk35xx-vendor-6.1/dt/
+          # 注入 maxio PHY 驱动 patch（K1A 网口用的是 Maxio MAE0621A）
+          # 框架内已有 001~004，armbian 按文件名顺序自动应用；漏这一步内核就没有 maxio 驱动
+          cp -v k1a/patch/kernel/rk35xx-vendor-6.1/005-maxio-phy.patch \
+                build/patch/kernel/rk35xx-vendor-6.1/
           echo "--- board config:"; cat build/config/boards/kickpi-k1a.csc
           echo "--- dts head:"; head -20 build/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-kickpi-k1a.dts
           # 启用 Maxio MAE0621A PHY 驱动（K1A 两个网口都使用它）

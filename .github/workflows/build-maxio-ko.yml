@@ -34,6 +34,10 @@ jobs:
           HDR="$(find /tmp/kb -name 'header-*.tar.gz' | head -1)"
           echo "--- header pkg: $HDR"
           mkdir -p /tmp/kh && tar xzf "$HDR" -C /tmp/kh
+          # tar 包里的 host tools 可能没带可执行位 → Error 126；补上
+          chmod +x /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost 2>/dev/null || true
+          find /tmp/kh/scripts -type f -exec chmod +x {} \; 2>/dev/null || true
+          ls -l /tmp/kh/scripts/basic/fixdep 2>/dev/null; ls -l /tmp/kh/scripts/mod/modpost 2>/dev/null; true
           echo "--- header tree:"; ls /tmp/kh | head -12
           cat /tmp/kh/include/config/kernel.release 2>/dev/null || true
           # 注意：header 包里的 fixdep/modpost 是预编译二进制（无源码），

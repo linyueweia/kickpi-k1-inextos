@@ -32,17 +32,17 @@ jobs:
                 build/patch/kernel/rk35xx-vendor-6.1/dt/
           echo "--- board config:"; cat build/config/boards/kickpi-k1a.csc
           echo "--- dts head:"; head -20 build/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-kickpi-k1a.dts
+          # 启用 Maxio MAE0621A PHY 驱动（K1A 两个网口都使用它）
+          for f in build/config/kernel/*rk35xx*.config; do
+            [ -f "$f" ] && echo 'CONFIG_MAXIO_PHY=y' >> "$f" && echo "CONFIG_MAXIO_PHY=y -> $f"
+          done || true
+          ls build/config/kernel/ 2>/dev/null | head -20 || true
 
       - name: Set up QEMU (binfmt_misc for arm64 cross-build)
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64,arm
 
-          # 启用 Maxio MAE0621A PHY 驱动（K1A 两个网口都用它）
-          for f in build/config/kernel/linux-rk35xx-vendor.config build/config/kernel/linux-rk35xx-vendor-current.config; do
-            [ -f "$f" ] && echo 'CONFIG_MAXIO_PHY=y' >> "$f" && echo "appended to $f"
-          done
-          ls build/config/kernel/ | grep -i rk35xx || true
 
       - name: Free disk space
         run: |

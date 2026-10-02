@@ -21,19 +21,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu make bc flex bison libssl-dev kmod
 
-      - name: Download FnNAS kernel header package
+      - name: Download FnNAS kernel bundle and extract headers
         run: |
           set -e
           KV="${{ github.event.inputs.kernel_ver }}"
-          URL="https://github.com/ophub/fnnas/releases/download/kernel_fnnas/header-rockchip-${KV}-trim.tar.gz"
+          URL="https://github.com/ophub/fnnas/releases/download/kernel_fnnas/${KV}-rockchip.tar.gz"
           echo "URL: $URL"
-          curl -fL --retry 3 -o /tmp/header.tar.gz "$URL"
-          ls -lh /tmp/header.tar.gz
-          mkdir -p /tmp/kh && tar xzf /tmp/header.tar.gz -C /tmp/kh
-          echo "--- header tree:"; ls /tmp/kh | head -15
-          # 预编译的 host tools 在 runner 上可能有 glibc 差异 → 删掉让 make 重建
-          rm -f /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost || true
+          curl -fL --retry 3 -o /tmp/kb.tar.gz "$URL"
+          ls -lh /tmp/kb.tar.gz
+          mkdir -p /tmp/kb && tar xzf /tmp/kb.tar.gz -C /tmp/kb
+          echo "--- bundle contents:"; find /tmp/kb -maxdepth 3 -name "*.tar.gz" | head -10
+          HDR="$(find /tmp/kb -name 'header-*.tar.gz' | head -1)"
+          echo "--- header pkg: $HDR"
+          mkdir -p /tmp/kh && tar xzf "$HDR" -C /tmp/kh
+          echo "--- header tree:"; ls /tmp/kh | head -12
           cat /tmp/kh/include/config/kernel.release 2>/dev/null || true
+          # 预编译 host tools 可能有 glibc 依赖差异 → 删掉让 make 重建
+          rm -f /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost || true
 
       - name: Prepare maxio module source（含 6.18 API 兼容修补）
         run: |

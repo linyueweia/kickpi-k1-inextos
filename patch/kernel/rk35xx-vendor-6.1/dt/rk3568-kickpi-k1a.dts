@@ -35,8 +35,8 @@
 		mmc2 = &sdmmc1;		/*       @fe2c0000 */
 		mmc3 = &sdmmc2;		/* SDIO  @fe000000 */
 
-		ethernet0 = &gmac1;	/* 1x GbE @fe2a0000 */
-		ethernet1 = &gmac0;	/*        @fe010000 */
+		ethernet0 = &gmac0;	/* eth0 @0xfe010000 */
+		ethernet1 = &gmac1;	/* eth1 @0xfe2a0000 */
 
 		led-boot     = &work_led;
 		led-failsafe = &work_led;
@@ -108,4 +108,16 @@
 	snps,reset-delays-us = <0 20000 100000>;
 	tx_delay = <0x21>;
 	rx_delay = <0x3c>;
+};
+
+/* GbE #2: gmac0 @0xfe010000  (this is the one that becomes eth0) */
+&gmac0 {
+	status = "okay";
+	phy-mode = "rgmii";
+	clock_in_out = "output";
+	snps,reset-gpio = <&gpio3 RK_PA7 GPIO_ACTIVE_LOW>;
+	snps,reset-active-low;
+	snps,reset-delays-us = <0 20000 100000>;
+	tx_delay = <0x2f>;
+	rx_delay = <0x39>;
 };

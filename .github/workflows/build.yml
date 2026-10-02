@@ -38,6 +38,12 @@ jobs:
         with:
           platforms: arm64,arm
 
+          # 启用 Maxio MAE0621A PHY 驱动（K1A 两个网口都用它）
+          for f in build/config/kernel/linux-rk35xx-vendor.config build/config/kernel/linux-rk35xx-vendor-current.config; do
+            [ -f "$f" ] && echo 'CONFIG_MAXIO_PHY=y' >> "$f" && echo "appended to $f"
+          done
+          ls build/config/kernel/ | grep -i rk35xx || true
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true

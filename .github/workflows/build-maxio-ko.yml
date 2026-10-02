@@ -40,26 +40,27 @@ jobs:
           ls -l /tmp/kh/scripts/basic/fixdep 2>/dev/null; ls -l /tmp/kh/scripts/mod/modpost 2>/dev/null; true
           echo "--- header tree:"; ls /tmp/kh | head -12
           cat /tmp/kh/include/config/kernel.release 2>/dev/null || true
-          # header 包内的 host tools 是 aarch64 二进制，在 x86_64 runner 上会
-          # 报 "Exec format error"。从 unifreq 官方源码重建 x86_64 版 host tools。
+          # header 包内的 host tools 是 aarch64 二进制 → 在 x86_64 runner 上报
+          # "Exec format error"。从 unifreq 官方源码重建为 x86_64 版。
+          # 关键：清掉可能存在的 CC/CFLAGS（否则 gcc 会走交叉编译器，编出 aarch64）
+          unset CC CXX CFLAGS CPPFLAGS LDFLAGS 2>/dev/null || true
+          HOST_GCC=/usr/bin/gcc
+          echo "host gcc: $($HOST_GCC -dumpmachine)"
           KSRC_RAW="https://raw.githubusercontent.com/unifreq/linux-6.18.y/main"
-          emerge_hosttool() {
-            local rel="$1"; local out="/tmp/kh/$rel"
-            local src="${rel%.*}.c"
-            echo "--- rebuild host tool: $rel (from $src)"
+          rebuild_hosttool() {
+            rel="$1"; out="/tmp/kh/$rel"; base="$(basename "${rel%.*}").c"
+            echo "=== rebuild $rel from $base ==="
             mkdir -p "$(dirname "$out")"
-            curl -fsSL -o "/tmp/$src" "$KSRC_RAW/$src" || { echo "  fetch fail: $src"; return 1; }
-            gcc -O2 -o "$out" "/tmp/$src" 2>&1 | tail -3
-            file "$out" 2>/dev/null | head -1; "$out" 2>&1 | head -1 || true
+            if curl -fsSL -o "/tmp/$base" "$KSRC_RAW/$rel.c"; then
+              $HOST_GCC -O2 -o "$out" "/tmp/$base" 2>&1 | tail -3 || { echo "  compile fail"; return 1; }
+              file -b "$out"
+            else
+              echo "  fetch fail: $rel.c"; return 1
+            fi
           }
-          for t in scripts/basic/fixdep scripts/mod/modpost; do
-            rel="${t%.*}.c"
-            echo "=== fetch $rel ==="
-            curl -fsSL -o "/tmp/$(basename $rel)" "$KSRC_RAW/$rel" && \
-              gcc -O2 -o "/tmp/kh/$t" "/tmp/$(basename $rel)" 2>&1 | tail -3 && \
-              echo "  built: $(file -b /tmp/kh/$t)" || echo "  FAILED: $t"
-          done
-          ls -l /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost 2>/dev/null
+          rebuild_hosttool scripts/basic/fixdep   || true
+          rebuild_hosttool scripts/mod/modpost    || true
+          echo "--- final:"; file -b /tmp/kh/scripts/basic/fixdep 2>/dev/null
 
       - name: Prepare maxio module source（含 6.18 API 兼容修补）
         run: |
@@ -77,7 +78,7 @@ jobs:
           cd ko
           make -C /tmp/kh M="$PWD" \
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            CC=aarch64-linux-gnu-gcc HOSTCC=gcc \
+            CC=aarch64-linux-gnu-gcc HOSTCC=/usr/bin/gcc \
             modules -j4 2>&1 | tail -30
           echo "=== 产物 ==="
           ls -l maxio.ko

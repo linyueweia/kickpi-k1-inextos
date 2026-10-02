@@ -69,32 +69,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Patch K1A bootloader into image
+      - name: Fix DTB and armbianEnv in image
         run: |
           set -e
           IMG=$(ls build/output/images/*.img | head -n1)
           [ -n "$IMG" ] || { echo "!! 输出镜像未找到"; exit 1; }
-          echo "target image: $IMG"
-          ls -lh "$IMG"
-          # ★ 关键：K1A 的 DDR 初始化固件就装在 idbloader.img 里，
-          #   框架默认 BOOTCONFIG=radxa-e25-rk3568_defconfig（LPDDR4），
-          #   在 K1A（DDR4）上 SPL 阶段内存初始化就失败 -> 连 U-Boot 都进不去 -> HDMI 全黑。
-          #   这里用从 K1A 实机 eMMC 提取、已验证可启动的 bootloader 覆盖。
-          dd if=k1a/kernel-files/idbloader.img of="$IMG" bs=512 seek=64    conv=notrunc,fsync
-          dd if=k1a/kernel-files/u-boot.itb   of="$IMG" bs=512 seek=16384 conv=notrunc,fsync
+          echo "target image: $IMG"; ls -lh "$IMG"
+          LOOP=$(sudo losetup -f --show -P "$IMG")
+          echo "loop: $LOOP"
+          sudo mkdir -p /mnt/ib
+          sudo mount ${LOOP}p1 /mnt/ib
+          # 1) 用已在 K1A 上验证过的 DTB 覆盖
+          #    它包含：K1A 原生硬件描述 + VOP OPP/供电 + 去掉 sd-uhs-sdr104 + 清空 chosen.bootargs
+          sudo cp -fv k1a/kernel-files/rk3568-kickpi-k1a.dtb /mnt/ib/dtb/rockchip/
+          # 2) 补全 armbianEnv.txt（缺 fdtfile/rootdev 会导致无 DTB、root 挂错 -> 黑屏/起不来）
+          ROOT_UUID=$(sudo blkid -s UUID -o value ${LOOP}p2)
+          echo "rootfs UUID: $ROOT_UUID"
+          sudo tee /mnt/ib/armbianEnv.txt >/dev/null <<EOF
+          verbosity=1
+          bootlogo=false
+          console=both
+          extraargs=cma=256M video=HDMI-A-1:1920x1080@60e
+          overlay_prefix=rk35xx
+          fdtfile=rockchip/rk3568-kickpi-k1a.dtb
+          rootdev=UUID=${ROOT_UUID}
+          rootfstype=ext4
+          usbstoragequirks=0x2537:0x1066:u,0x2537:0x1068:u
+          EOF
+          echo "--- final armbianEnv.txt ---"; cat /mnt/ib/armbianEnv.txt
+          echo "--- final DTB ---"; md5sum /mnt/ib/dtb/rockchip/rk3568-kickpi-k1a.dtb; ls -l /mnt/ib/dtb/rockchip/rk3568-kickpi-k1a.dtb
           sync
-          echo "--- 镜像内引导区校验（应与 kernel-files 一致）---"
-          echo -n "img  @32KiB  : "; dd if="$IMG" bs=512 skip=64    count=620  status=none | md5sum
-          echo -n "img  @8MiB   : "; dd if="$IMG" bs=512 skip=16384 count=3251 status=none | md5sum
-          echo -n "src  idb     : "; md5sum k1a/kernel-files/idbloader.img
-          echo -n "src  uboot   : "; md5sum k1a/kernel-files/u-boot.itb
-          # 引导区已变，重新生成 .xz
-          if [ -f "${IMG}.xz" ]; then
-            echo "re-compressing ${IMG}.xz ..."
-            rm -f "${IMG}.xz"
-            xz -T0 "${IMG}"
-            ls -lh "${IMG}.xz"
-          fi
+          sudo umount /mnt/ib
+          sudo losetup -d "$LOOP"
+          if [ -f "${IMG}.xz" ]; then echo "re-compressing..."; rm -f "${IMG}.xz"; xz -T0 "${IMG}"; ls -lh "${IMG}.xz"; fi
 
       - name: Show outputs
         if: always()

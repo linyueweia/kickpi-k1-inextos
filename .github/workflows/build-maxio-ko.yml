@@ -104,12 +104,16 @@ jobs:
 
       - name: Build maxio.ko
         run: |
-          set -e
+          set -e -o pipefail
           cd /tmp/ks
           # 注意：必须用 modules 目标（会传 -DMODULE）；maxio.ko 单目标走 single_modules，
           # 会导致 MODULE_LICENSE 宏为空并强制重建全内核 Module.symvers。
+          # 先单独编 maxio.o，把它的错误完整暴露出来（不要被 tail 截断）
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
-               CC=aarch64-linux-gnu-gcc M=drivers/net/phy modules -j4 2>&1 | tail -30
+               CC=aarch64-linux-gnu-gcc M=drivers/net/phy maxio.o 2>&1 | tail -60
+          echo "--- maxio.o:"; ls -l drivers/net/phy/maxio.o 2>&1 || true
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
+               CC=aarch64-linux-gnu-gcc M=drivers/net/phy modules -j4 2>&1 | tail -60
           echo "=== artifact ==="
           ls -l drivers/net/phy/maxio.ko
           aarch64-linux-gnu-objdump -f drivers/net/phy/maxio.ko | head -4

@@ -1,0 +1,74 @@
+name: Build iNextOS for KICKPI K1A
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build iNextOS image (KICKPI K1A / RK3568)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout board adaptation
+        uses: actions/checkout@v4
+        with:
+          path: k1a
+
+      - name: Checkout iNextOS build framework (armbian-easepi)
+        uses: actions/checkout@v4
+        with:
+          repository: jjm2473/armbian-easepi
+          ref: easepi-v26.02
+          path: build
+
+      - name: Inject KICKPI K1A board support
+        run: |
+          set -e
+          cp -v k1a/config/boards/kickpi-k1a.csc build/config/boards/
+          mkdir -p build/patch/kernel/rk35xx-vendor-6.1/dt
+          cp -v k1a/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-kickpi-k1a.dts \
+                build/patch/kernel/rk35xx-vendor-6.1/dt/
+          echo "--- board config:"; cat build/config/boards/kickpi-k1a.csc
+          echo "--- dts head:"; head -20 build/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-kickpi-k1a.dts
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Build iNextOS image
+        run: |
+          cd build
+          sudo ./compile.sh build \
+            BOARD=kickpi-k1a \
+            BRANCH=vendor \
+            RELEASE=trixie \
+            BUILD_MINIMAL=yes \
+            BUILD_DESKTOP=no \
+            KERNEL_CONFIGURE=no \
+            CLEAN_LEVEL="" \
+            SHOW_LOG=yes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Show outputs
+        if: always()
+        run: |
+          echo "=== output tree ==="
+          find build/output -maxdepth 3 -type f 2>/dev/null | head -50 || true
+
+      - name: Upload iNextOS artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inextos-kickpi-k1a
+          path: |
+            build/output/images/*.img
+            build/output/images/*.img.xz
+            build/output/images/*.sha
+            build/output/debs/*.deb
+          if-no-files-found: warn
+          retention-days: 14

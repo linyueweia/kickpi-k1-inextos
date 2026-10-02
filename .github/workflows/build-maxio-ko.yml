@@ -1,117 +1,109 @@
-name: Build maxio.ko (Maxio MAE0621A PHY) for K1A / FnNAS
+name: Build maxio.ko (Maxio MAE0621A) for K1A / FnNAS  [unifreq source]
+
+# 结论（已查清）：
+#  - ophub 的 header 包里的 host tools(fixdep/modpost) 是 aarch64 二进制，
+#    在 x86_64 runner 上无法执行("Exec format error")，且它们无法脱离内核树单独编译。
+#  - 正确做法：用官方内核源码 unifreq/linux-6.18.y，从飞牛 kernel 包取 config，
+#    make modules_prepare 生成 x86 host tools，再编 maxio.ko。
 
 on:
   workflow_dispatch:
     inputs:
       kernel_ver:
-        description: 'FnNAS kernel version (e.g. 6.18.18 or 6.12.41)'
+        description: 'FnNAS kernel version (e.g. 6.18.18)'
         required: true
         default: '6.18.18'
+      ksrc_branch:
+        description: 'unifreq kernel branch'
+        required: true
+        default: 'main'
 
 jobs:
   build-ko:
-    name: Build maxio.ko (${{ github.event.inputs.kernel_ver }}-trim)
+    name: maxio.ko (${{ github.event.inputs.kernel_ver }}) from unifreq source
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install cross toolchain and tools
+      - name: Install toolchain and kernel build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu make bc flex bison libssl-dev kmod
+          sudo apt-get install -y gcc-aarch64-linux-gnu make bc flex bison libssl-dev libelf-dev \
+                                  kmod device-tree-compiler cpio rsync
 
-      - name: Diagnose host toolchain (环境诊断)
-        run: |
-          echo "===== 0) 工作目录与 runner ====="
-          pwd; uname -a; cat /etc/os-release | head -2
-          echo "===== 1) 相关环境变量 ====="
-          env | grep -iE '^(CC|CXX|CPP|CFLAGS|CPPFLAGS|LDFLAGS|ARCH|CROSS_COMPILE|KBUILD)' || echo "(none)"
-          echo "===== 2) gcc 解析 ====="
-          echo "--- which -a gcc:"; which -a gcc || true
-          echo "--- ls -l /usr/bin/gcc:"; ls -l /usr/bin/gcc || true
-          echo "--- file /usr/bin/gcc:"; file -b /usr/bin/gcc || true
-          echo "--- /usr/bin/gcc -dumpmachine:"; /usr/bin/gcc -dumpmachine || true
-          echo "--- gcc -dumpmachine:"; gcc -dumpmachine || true
-          echo "--- gcc --version:"; gcc --version | head -1 || true
-          echo "===== 3) 交叉编译器 ====="
-          which aarch64-linux-gnu-gcc; aarch64-linux-gnu-gcc -dumpmachine || true
-          echo "===== 4) 实测编译架构（关键） ====="
-          printf '#include <stdio.h>\nint main(){printf("hi\\n");return 0;}\n' > /tmp/t.c
-          /usr/bin/gcc -o /tmp/t_x86 /tmp/t.c && echo "  /usr/bin/gcc -> $(file -b /tmp/t_x86)"
-          gcc -o /tmp/t_plain /tmp/t.c && echo "  gcc          -> $(file -b /tmp/t_plain)"
-          echo "===== 5) apt 来源 ====="
-          dpkg -l | grep -E '^ii +(gcc|gcc-[0-9]+|libc6)' | awk '{print $2, $3}' | head -8
-
-      - name: Download FnNAS kernel bundle and extract headers
+      - name: Fetch FnNAS kernel config (from ophub kernel bundle)
         run: |
           set -e
           KV="${{ github.event.inputs.kernel_ver }}"
           URL="https://github.com/ophub/fnnas/releases/download/kernel_fnnas/${KV}-rockchip.tar.gz"
-          echo "URL: $URL"
           curl -fL --retry 3 -o /tmp/kb.tar.gz "$URL"
-          ls -lh /tmp/kb.tar.gz
           mkdir -p /tmp/kb && tar xzf /tmp/kb.tar.gz -C /tmp/kb
-          echo "--- bundle contents:"; find /tmp/kb -maxdepth 3 -name "*.tar.gz" | head -10
-          HDR="$(find /tmp/kb -name 'header-*.tar.gz' | head -1)"
-          echo "--- header pkg: $HDR"
-          mkdir -p /tmp/kh && tar xzf "$HDR" -C /tmp/kh
-          # tar 包里的 host tools 可能没带可执行位 → Error 126；补上
-          chmod +x /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost 2>/dev/null || true
-          find /tmp/kh/scripts -type f -exec chmod +x {} \; 2>/dev/null || true
-          ls -l /tmp/kh/scripts/basic/fixdep 2>/dev/null; ls -l /tmp/kh/scripts/mod/modpost 2>/dev/null; true
-          echo "--- header tree:"; ls /tmp/kh | head -12
-          cat /tmp/kh/include/config/kernel.release 2>/dev/null || true
-          # header 包内的 host tools 是 aarch64 二进制 → 在 x86_64 runner 上报
-          # "Exec format error"。从 unifreq 官方源码重建为 x86_64 版。
-          # 关键：清掉可能存在的 CC/CFLAGS（否则 gcc 会走交叉编译器，编出 aarch64）
-          unset CC CXX CFLAGS CPPFLAGS LDFLAGS 2>/dev/null || true
-          HOST_GCC=/usr/bin/gcc
-          echo "host gcc: $($HOST_GCC -dumpmachine)"
-          KSRC_RAW="https://raw.githubusercontent.com/unifreq/linux-6.18.y/main"
-          rebuild_hosttool() {
-            rel="$1"; out="/tmp/kh/$rel"; base="$(basename "${rel%.*}").c"
-            echo "=== rebuild $rel from $base ==="
-            mkdir -p "$(dirname "$out")"
-            if curl -fsSL -o "/tmp/$base" "$KSRC_RAW/$rel.c"; then
-              $HOST_GCC -O2 -o "$out" "/tmp/$base" 2>&1 | tail -3 || { echo "  compile fail"; return 1; }
-              file -b "$out"
-            else
-              echo "  fetch fail: $rel.c"; return 1
-            fi
-          }
-          rebuild_hosttool scripts/basic/fixdep   || true
-          rebuild_hosttool scripts/mod/modpost    || true
-          echo "--- final:"; file -b /tmp/kh/scripts/basic/fixdep 2>/dev/null
+          tar xzf "$(find /tmp/kb -name 'boot-*.tar.gz' | head -1)" -C /tmp/kb
+          CFG="$(find /tmp/kb -maxdepth 2 -name 'config-*' | head -1)"
+          echo "config: $CFG"
+          mkdir -p /tmp/cfg && cp "$CFG" /tmp/cfg/config
+          head -5 /tmp/cfg/config
 
-      - name: Prepare maxio module source（含 6.18 API 兼容修补）
+      - name: Clone unifreq kernel source
         run: |
           set -e
-          mkdir -p ko && cp kernel-files/maxio.c ko/
-          printf 'obj-m += maxio.o\n' > ko/Makefile
-          # 6.18 移除了 phy_device.eee_broken_modes（EEE 已由 MDIO_AN_EEE_ADV=0 关闭）
-          sed -i 's|^\([[:space:]]*\)phydev->eee_broken_modes = broken;|\1/* removed: member gone in >=6.14 */|' ko/maxio.c
-          echo "--- 检查 eee_broken_modes:"; grep -n 'eee_broken_modes' ko/maxio.c || echo "  已清除"
-          echo "--- 检查 PHY_GBIT_FEATURES:"; grep -c 'PHY_GBIT_FEATURES' ko/maxio.c || true
+          git clone --depth=1 -b "${{ github.event.inputs.ksrc_branch }}" \
+            https://github.com/unifreq/linux-6.18.y /tmp/ks
+          echo "--- kernel Makefile head:"; head -5 /tmp/ks/Makefile
+          echo "--- source size:"; du -sh /tmp/ks
+
+      - name: Configure kernel (olddefconfig) and prepare build
+        run: |
+          set -e
+          cd /tmp/ks
+          cp /tmp/cfg/config .config
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig 2>&1 | tail -10
+          echo "--- prepare host tools + module headers ---"
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
+               modules_prepare -j4 2>&1 | tail -15
+          echo "--- host tool arch (must be x86-64) ---"
+          file -b /tmp/ks/scripts/basic/fixdep
+          file -b /tmp/ks/scripts/mod/modpost
+
+      - name: Inject maxio driver (source + Kconfig + Makefile)
+        run: |
+          set -e
+          cd /tmp/ks
+          cp "$GITHUB_WORKSPACE/kernel-files/maxio.c" drivers/net/phy/maxio.c
+          # 6.18 兼容：phy_device.eee_broken_modes 已移除（EEE 已由 MDIO_AN_EEE_ADV=0 关闭）
+          sed -i 's|^\([[:space:]]*\)phydev->eee_broken_modes = broken;|\1/* removed: member gone in >=6.14 */|' drivers/net/phy/maxio.c
+          # Kconfig
+          if ! grep -q 'config MAXIO_PHY' drivers/net/phy/Kconfig; then
+            python3 - <<'PYEOF'
+p='drivers/net/phy/Kconfig'
+s=open(p).read()
+blk='config MAXIO_PHY\n\ttristate "Maxio PHYs"\n\thelp\n\t  Currently supports the Maxio MAE0621A family of Gigabit Ethernet PHYs.\n\n'
+open(p,'w').write(s.replace('config MOTORCOMM_PHY', blk+'config MOTORCOMM_PHY', 1))
+PYEOF
+          fi
+          # Makefile
+          if ! grep -q 'CONFIG_MAXIO_PHY' drivers/net/phy/Makefile; then
+            sed -i 's|^obj-$(CONFIG_MOTORCOMM_PHY)|obj-$(CONFIG_MAXIO_PHY)\t\t+= maxio.o\nobj-$(CONFIG_MOTORCOMM_PHY)|' drivers/net/phy/Makefile
+          fi
+          echo "--- Kconfig:"; grep -A3 'config MAXIO_PHY' drivers/net/phy/Kconfig
+          echo "--- Makefile:"; grep -n 'MAXIO_PHY' drivers/net/phy/Makefile
 
       - name: Build maxio.ko
         run: |
           set -e
-          cd ko
-          make -C /tmp/kh M="$PWD" \
-            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            CC=aarch64-linux-gnu-gcc HOSTCC=/usr/bin/gcc \
-            modules -j4 2>&1 | tail -30
-          echo "=== 产物 ==="
-          ls -l maxio.ko
-          aarch64-linux-gnu-objdump -f maxio.ko | head -3 || true
-          modinfo maxio.ko | head -10 || true
+          cd /tmp/ks
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- HOSTCC=/usr/bin/gcc \
+               CC=aarch64-linux-gnu-gcc M=drivers/net/phy maxio.ko -j4 2>&1 | tail -30
+          echo "=== artifact ==="
+          ls -l drivers/net/phy/maxio.ko
+          aarch64-linux-gnu-objdump -f drivers/net/phy/maxio.ko | head -4
+          modinfo drivers/net/phy/maxio.ko | head -12
 
       - name: Upload maxio.ko
         uses: actions/upload-artifact@v4
         with:
           name: maxio-ko-${{ github.event.inputs.kernel_ver }}
-          path: |
-            ko/maxio.ko
-            ko/Module.symvers
+          path: /tmp/ks/drivers/net/phy/maxio.ko
           if-no-files-found: error

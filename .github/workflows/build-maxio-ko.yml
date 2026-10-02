@@ -76,12 +76,7 @@ jobs:
           sed -i 's|^\([[:space:]]*\)phydev->eee_broken_modes = broken;|\1/* removed: member gone in >=6.14 */|' drivers/net/phy/maxio.c
           # Kconfig
           if ! grep -q 'config MAXIO_PHY' drivers/net/phy/Kconfig; then
-            python3 - <<'PYEOF'
-p='drivers/net/phy/Kconfig'
-s=open(p).read()
-blk='config MAXIO_PHY\n\ttristate "Maxio PHYs"\n\thelp\n\t  Currently supports the Maxio MAE0621A family of Gigabit Ethernet PHYs.\n\n'
-open(p,'w').write(s.replace('config MOTORCOMM_PHY', blk+'config MOTORCOMM_PHY', 1))
-PYEOF
+            python3 -c "p='drivers/net/phy/Kconfig';s=open(p).read();blk='config MAXIO_PHY\\n\\ttristate \"Maxio PHYs\"\\n\\thelp\\n\\t  Currently supports the Maxio MAE0621A family of Gigabit Ethernet PHYs.\\n\\n';open(p,'w').write(s.replace('config MOTORCOMM_PHY',blk+'config MOTORCOMM_PHY',1))"
           fi
           # Makefile
           if ! grep -q 'CONFIG_MAXIO_PHY' drivers/net/phy/Makefile; then

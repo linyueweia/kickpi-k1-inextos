@@ -36,8 +36,9 @@ jobs:
           mkdir -p /tmp/kh && tar xzf "$HDR" -C /tmp/kh
           echo "--- header tree:"; ls /tmp/kh | head -12
           cat /tmp/kh/include/config/kernel.release 2>/dev/null || true
-          # 预编译 host tools 可能有 glibc 依赖差异 → 删掉让 make 重建
-          rm -f /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost || true
+          # 注意：header 包里的 fixdep/modpost 是预编译二进制（无源码），
+          # 在 Actions 的 Ubuntu 24.04(glibc 2.39) 上可以直接运行，切勿删除！
+          ls -l /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost 2>/dev/null | head -3
 
       - name: Prepare maxio module source（含 6.18 API 兼容修补）
         run: |

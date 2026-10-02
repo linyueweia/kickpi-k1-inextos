@@ -40,9 +40,26 @@ jobs:
           ls -l /tmp/kh/scripts/basic/fixdep 2>/dev/null; ls -l /tmp/kh/scripts/mod/modpost 2>/dev/null; true
           echo "--- header tree:"; ls /tmp/kh | head -12
           cat /tmp/kh/include/config/kernel.release 2>/dev/null || true
-          # 注意：header 包里的 fixdep/modpost 是预编译二进制（无源码），
-          # 在 Actions 的 Ubuntu 24.04(glibc 2.39) 上可以直接运行，切勿删除！
-          ls -l /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost 2>/dev/null | head -3
+          # header 包内的 host tools 是 aarch64 二进制，在 x86_64 runner 上会
+          # 报 "Exec format error"。从 unifreq 官方源码重建 x86_64 版 host tools。
+          KSRC_RAW="https://raw.githubusercontent.com/unifreq/linux-6.18.y/main"
+          emerge_hosttool() {
+            local rel="$1"; local out="/tmp/kh/$rel"
+            local src="${rel%.*}.c"
+            echo "--- rebuild host tool: $rel (from $src)"
+            mkdir -p "$(dirname "$out")"
+            curl -fsSL -o "/tmp/$src" "$KSRC_RAW/$src" || { echo "  fetch fail: $src"; return 1; }
+            gcc -O2 -o "$out" "/tmp/$src" 2>&1 | tail -3
+            file "$out" 2>/dev/null | head -1; "$out" 2>&1 | head -1 || true
+          }
+          for t in scripts/basic/fixdep scripts/mod/modpost; do
+            rel="${t%.*}.c"
+            echo "=== fetch $rel ==="
+            curl -fsSL -o "/tmp/$(basename $rel)" "$KSRC_RAW/$rel" && \
+              gcc -O2 -o "/tmp/kh/$t" "/tmp/$(basename $rel)" 2>&1 | tail -3 && \
+              echo "  built: $(file -b /tmp/kh/$t)" || echo "  FAILED: $t"
+          done
+          ls -l /tmp/kh/scripts/basic/fixdep /tmp/kh/scripts/mod/modpost 2>/dev/null
 
       - name: Prepare maxio module source（含 6.18 API 兼容修补）
         run: |
